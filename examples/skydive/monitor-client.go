@@ -48,8 +48,12 @@ func main() {
 	}
 }
 
+// removed option withBlock for development in case server is not started
+// A better solution that handles multiple port recommended by Ed is here
+// https://github.com/ligato/networkservicemesh/blob/master/pkg/tools/tools.go#L91
+// That could be implemented later if we need it
 func dial(ctx context.Context, network string, address string) (*grpc.ClientConn, error) {
-	conn, err := grpc.DialContext(ctx, address, grpc.WithInsecure(), grpc.WithBlock(),
+	conn, err := grpc.DialContext(ctx, address, grpc.WithInsecure(),
 		grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
 			return net.Dial(network, addr)
 		}),

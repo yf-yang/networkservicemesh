@@ -245,28 +245,28 @@ func feedFakeCrossConnect(
 				con = genLocalConnection(&id)
 				crossConnectBuffer = append(crossConnectBuffer, con)
 				monitor.UpdateCrossConnect(con.local)
-				logrus.Info("Generate a Local CrossConnect")
+				logrus.WithFields(logrus.Fields{"Update": "", "Local": ""}).Info("Status Change")
 			case false: // remote
 				nRemote++
 				con = genRemoteConnection(&id)
 				crossConnectBuffer = append(crossConnectBuffer, con)
 				monitor.UpdateCrossConnect(con.remoteReceiver)
 				monitor.UpdateCrossConnect(con.remoteSender)
-				logrus.Info("Generate a pair of Remote CrossConnects")
+				logrus.WithFields(logrus.Fields{"Update": "", "Remote": ""}).Info("Status Change")
 			}
 		} else {
 			i := rand.Intn(len(crossConnectBuffer))
 			con := crossConnectBuffer[i]
-			switch con.local == nil {
+			switch con.local != nil {
 			case true: // local
 				nLocal--
 				monitor.DeleteCrossConnect(con.local)
-				logrus.Info("Delete a Local CrossConnect")
+				logrus.WithFields(logrus.Fields{"Delete": "", "Local": ""}).Info("Status Change")
 			case false: // remote
 				nRemote--
 				monitor.DeleteCrossConnect(con.remoteSender)
 				monitor.DeleteCrossConnect(con.remoteReceiver)
-				logrus.Info("Delete a pair of Remote CrossConnects")
+				logrus.WithFields(logrus.Fields{"Delete": "", "Remote": ""}).Info("Status Change")
 			}
 			// remove the xconHolder from buffer
 			copy(crossConnectBuffer[i:], crossConnectBuffer[i+1:])

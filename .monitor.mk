@@ -1,5 +1,9 @@
 .PHONY: mon
-mon: mon-server mon-client
+mon: mon-local-server mon-server mon-client
+
+.PHONY: mon-local-server
+mon-local-server:
+	CGO_ENABLED=0 GOOS=linux go build -ldflags '-extldflags "-static"' -o $(GOPATH)/bin/mon-local-server ./examples/skydive/server/local-server.go
 
 .PHONY: mon-server
 mon-server:

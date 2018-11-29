@@ -29,7 +29,7 @@ metadata:
 data:
   SKYDIVE_ANALYZER_FLOW_BACKEND: memory
   SKYDIVE_ANALYZER_TOPOLOGY_BACKEND: memory
-  SKYDIVE_ANALYZER_TOPOLOGY_PROBES: ""
+  SKYDIVE_LOGGING_LEVEL: DEBUG
   SKYDIVE_ETCD_LISTEN: 0.0.0.0:12379
 ---
 apiVersion: v1
@@ -53,7 +53,7 @@ spec:
     spec:
       containers:
         - name: skydive-analyzer
-          image: skydive/skydive
+          image: skydive/skydive:devel
           args:
             - analyzer
             - --listen=0.0.0.0:8082
@@ -89,7 +89,7 @@ spec:
       hostPID: true
       containers:
         - name: skydive-agent
-          image: skydive/skydive
+          image: skydive/skydive:devel
           args:
             - agent
           ports:

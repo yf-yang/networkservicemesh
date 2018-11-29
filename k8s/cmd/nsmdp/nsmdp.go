@@ -25,7 +25,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ligato/networkservicemesh/controlplane/pkg/apis/nsmdapi"
 	"github.com/ligato/networkservicemesh/controlplane/pkg/nsmd"
+	"github.com/ligato/networkservicemesh/controlplane/pkg/serviceregistry"
 	"github.com/ligato/networkservicemesh/pkg/tools"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -41,13 +43,16 @@ const (
 )
 
 type nsmClientEndpoints struct {
+	serviceRegistry serviceregistry.ServiceRegistry
 }
 
 func (n *nsmClientEndpoints) Allocate(ctx context.Context, reqs *pluginapi.AllocateRequest) (*pluginapi.AllocateResponse, error) {
 	logrus.Info("Client request for nsmdp resource...")
 	responses := &pluginapi.AllocateResponse{}
-	for range reqs.ContainerRequests {
-		workspace, err := nsmd.RequestWorkspace()
+	for _, req := range reqs.ContainerRequests {
+		id := req.DevicesIDs[0]
+		logrus.Infof("Requesting Workspace, device ID: %s", id)
+		workspace, err := nsmd.RequestWorkspace(n.serviceRegistry, id)
 		logrus.Infof("Received Workspace %v", workspace)
 		if err != nil {
 			logrus.Errorf("error talking to nsmd: %v", err)
@@ -63,6 +68,7 @@ func (n *nsmClientEndpoints) Allocate(ctx context.Context, reqs *pluginapi.Alloc
 					nsmd.NsmDevicePluginEnv: "true",
 					nsmd.NsmServerSocketEnv: mount.ContainerPath + workspace.NsmServerSocket,
 					nsmd.NsmClientSocketEnv: mount.ContainerPath + workspace.NsmClientSocket,
+					nsmd.WorkspaceEnv:       workspace.ClientBaseDir,
 				},
 			})
 		}
@@ -104,13 +110,53 @@ func (n *nsmClientEndpoints) PreStartContainer(context.Context, *pluginapi.PreSt
 	return &pluginapi.PreStartContainerResponse{}, nil
 }
 
+func enumWorkspaces(serviceRegistry serviceregistry.ServiceRegistry) (*nsmdapi.EnumConnectionReply, error) {
+	client, con, err := serviceRegistry.NSMDApiClient()
+	if err != nil {
+		logrus.Fatalf("Failed to connect to NSMD: %+v...", err)
+	}
+	defer con.Close()
+	reply, err := client.EnumConnection(context.Background(), &nsmdapi.EnumConnectionRequest{})
+	if err != nil {
+		return nil, err
+	}
+	logrus.Infof("nsmd allocated workspace %+v for client operations...", reply)
+	return reply, nil
+}
+
+func indexOf(slice []string, value string) int {
+	for i, v := range slice {
+		if v == value {
+			return i
+		}
+	}
+	return -1
+}
+
 func (n *nsmClientEndpoints) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin_ListAndWatchServer) error {
 	logrus.Infof("ListAndWatch was called with s: %+v", s)
 	for {
 		resp := new(pluginapi.ListAndWatchResponse)
-		for dev := 1; dev < 10; dev++ {
+		enumWS, err := enumWorkspaces(n.serviceRegistry)
+		if err != nil {
+			logrus.Errorf("error retrieving workspaces from nsmd: %v", err)
+		}
+		workspaces := enumWS.Workspace
+		id := 1
+		for pool := 0; pool < 10; id++ {
+			workspace := fmt.Sprintf("nsm-%d", id)
+			if indexOf(workspaces, workspace) != -1 {
+				continue
+			}
+			pool++
 			resp.Devices = append(resp.Devices, &pluginapi.Device{
-				ID:     fmt.Sprintf("%d", dev),
+				ID:     workspace,
+				Health: pluginapi.Healthy,
+			})
+		}
+		for _, w := range workspaces {
+			resp.Devices = append(resp.Devices, &pluginapi.Device{
+				ID:     w,
 				Health: pluginapi.Healthy,
 			})
 		}
@@ -149,9 +195,21 @@ func startDeviceServer(nsm *nsmClientEndpoints) error {
 	return nil
 }
 
+func waitForNsmdAvailable() {
+	for {
+		if tools.WaitForPortAvailable(context.Background(), "unix", nsmd.ServerSock, 100*time.Millisecond) == nil {
+			break
+		}
+	}
+}
+
 // NewNSMDeviceServer registers and starts Kubelet's device plugin
-func NewNSMDeviceServer() error {
-	nsm := &nsmClientEndpoints{}
+func NewNSMDeviceServer(serviceRegistry serviceregistry.ServiceRegistry) error {
+	waitForNsmdAvailable()
+	nsm := &nsmClientEndpoints{
+		serviceRegistry: serviceRegistry,
+	}
+
 	if err := startDeviceServer(nsm); err != nil {
 		return err
 	}
@@ -162,7 +220,9 @@ func NewNSMDeviceServer() error {
 }
 
 func main() {
-	err := NewNSMDeviceServer()
+
+	serviceRegistry := nsmd.NewServiceRegistry()
+	err := NewNSMDeviceServer(serviceRegistry)
 
 	if err != nil {
 		logrus.Errorf("failed to start server: %v", err)

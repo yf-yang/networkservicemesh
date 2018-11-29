@@ -1,10 +1,8 @@
 package main
 
 import (
-	"github.com/ligato/networkservicemesh/controlplane/pkg/monitor_crossconnect_server"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 
@@ -14,30 +12,26 @@ import (
 )
 
 func main() {
-	// TODO add a real url
-	nsmUrl := "127.0.0.1:5000"
-	model := model.NewModel(nsmUrl)
-	defer nsmd.StopRegistryClient()
+
+	apiRegistry := nsmd.NewApiRegistry()
+	serviceRegistry := nsmd.NewServiceRegistry()
+
+	model := model.NewModel() // This is TCP gRPC server uri to access this NSMD via network.
+
+	defer serviceRegistry.Stop()
 
 	if err := nsmd.StartDataplaneRegistrarServer(model); err != nil {
 		logrus.Fatalf("Error starting dataplane service: %+v", err)
 		os.Exit(1)
 	}
 
-	crossConnectAddress := os.Getenv("NSMD_CROSS_CONNECT_ADDRESS")
-	if strings.TrimSpace(crossConnectAddress) == "" {
-		crossConnectAddress = "0.0.0.0:5007"
-	}
-
-	if err, monitorServer, _ := monitor_crossconnect_server.StartNSMCrossConnectServer(model, crossConnectAddress); err != nil {
-		logrus.Fatalf("Error starting nsmd CrossConnect Server %+v", err)
-		os.Exit(1)
-	} else {
-		defer monitorServer.Stop()
-	}
-
-	if err := nsmd.StartNSMServer(model); err != nil {
+	if err := nsmd.StartNSMServer(model, serviceRegistry, apiRegistry); err != nil {
 		logrus.Fatalf("Error starting nsmd service: %+v", err)
+		os.Exit(1)
+	}
+
+	if err := nsmd.StartAPIServer(model, apiRegistry, serviceRegistry); err != nil {
+		logrus.Fatalf("Error starting nsmd api service: %+v", err)
 		os.Exit(1)
 	}
 

@@ -51,6 +51,7 @@ type OnDisConnectFunc func() error
 func (dr *dataplaneRegistration) register(ctx context.Context) {
 	logrus.Info("Registering with NetworkServiceManager")
 	logrus.Infof("Retry interval: %s", dr.registrar.registrationRetryInterval)
+	tools.WaitForPortAvailable(context.Background(), "unix", dr.registrar.registrarSocket, 100*time.Millisecond)
 	ticker := time.NewTicker(dr.registrar.registrationRetryInterval)
 	for ; true; <-ticker.C {
 		select {
@@ -86,7 +87,7 @@ func (dr *dataplaneRegistration) tryRegistration(ctx context.Context) error {
 	_, err = dr.client.RequestDataplaneRegistration(ctx, req)
 	logrus.Infof("%s: send request to Dataplane Registrar: %+v", dr.dataplaneName, req)
 	if err != nil {
-		logrus.Infof("%s: failure to create grpc client for RequestDataplaneRegistration.", dr.dataplaneName, dr.registrar.registrarSocket)
+		logrus.Infof("%s: failure to create grpc client for RequestDataplaneRegistration on socket %s", dr.dataplaneName, dr.registrar.registrarSocket)
 		return err
 	}
 	if dr.onConnect != nil {

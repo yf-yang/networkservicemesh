@@ -3,7 +3,7 @@ jobs:
   sanity-check:
     working_directory: /go/src/github.com/ligato/networkservicemesh
     docker:
-      - image: circleci/golang:1.10
+      - image: circleci/golang:1.11
     steps:
       - checkout
       - run:
@@ -11,12 +11,14 @@ jobs:
             sudo apt-get install yamllint python3-pkg-resources
             ./.circleci/install-shellcheck.sh
       - run: yamllint -c .yamllint.yml $(git ls-files '*.yaml' '*.yml' | grep -v 'vendor/')
+      - run: go version
       - run: make vet check dep-check
       - run: go install ./vendor/k8s.io/code-generator/cmd/deepcopy-gen/
-      - run: go get -u github.com/golang/protobuf/protoc-gen-go
+      - run: go install ./vendor/github.com/golang/protobuf/protoc-gen-go/
       - run: go get golang.org/x/tools/cmd/stringer
       - run: ./scripts/install-protoc.sh
-      - run: PATH=${PATH}:~/bin go generate ./...; git diff --exit-code || echo "Run go generate ./... and recommit"
+      # - run: PATH=${PATH}:~/bin go generate ./...; git diff --exit-code || (echo "Run go generate ./... and recommit. If that doesn't work make sure you have installed via 'go install ./vendor/github.com/golang/protobuf/protoc-gen-go/'";exit 1)
+      - run: go build ./...
 
   build:
     working_directory: /go/src/github.com/ligato/networkservicemesh
@@ -98,13 +100,50 @@ jobs:
       - restore_cache:
           key: cncf-data-{{.Environment.CIRCLE_WORKFLOW_ID}}
       - run:
-          command: ./scripts/circle-integration-tests.sh
+          command: |
+            ./scripts/circle-integration-tests.sh
+            make k8s-check
           environment:
             KUBECONFIG: /home/circleci/project/data/kubeconfig
       - run:
           when: always
-          name: Dump Logs
-          command: ./scripts/dump_logs.sh
+          name: Dump K8s state
+          command: |
+            kubectl get pods -o wide
+            kubectl get nodes
+            kubectl get nse
+            kubectl get netsvc
+            kubectl get nsm
+          environment:
+            KUBECONFIG: /home/circleci/project/data/kubeconfig
+      - run:
+          when: always
+          name: Dump Logs - nsc
+          command: make k8s-nsc-logs
+          environment:
+            KUBECONFIG: /home/circleci/project/data/kubeconfig
+      - run:
+          when: always
+          name: Dump Logs - nsmd
+          command: make k8s-nsmd-logs
+          environment:
+            KUBECONFIG: /home/circleci/project/data/kubeconfig
+      - run:
+          when: always
+          name: Dump Logs - icmp-responder-nse
+          command: make k8s-icmp-responder-nse-logs
+          environment:
+            KUBECONFIG: /home/circleci/project/data/kubeconfig
+      - run:
+          when: always
+          name: Dump Logs - vppagent-dataplane
+          command: make k8s-vppagent-dataplane-logs
+          environment:
+            KUBECONFIG: /home/circleci/project/data/kubeconfig
+      - run:
+          when: always
+          name: Dump CrossConnect Monitor logs
+          command: make k8s-crossconnect-monitor-logs
           environment:
             KUBECONFIG: /home/circleci/project/data/kubeconfig
       - run:
@@ -179,6 +218,20 @@ jobs:
             export TAG="$BUILD_TAG"
             make docker-nsmdp-build
             make docker-nsmdp-push
+  build-crossconnect-monitor:
+    working_directory: /go/src/github.com/ligato/networkservicemesh/
+    docker:
+      - image: circleci/golang:1.10
+    steps:
+      - checkout
+      - setup_remote_docker
+      - run:
+          command: |
+            export COMMIT="${CIRCLE_SHA1:8:8}"
+            export BUILD_TAG="circle-${CIRCLE_BUILD_NUM}"
+            export TAG="$BUILD_TAG"
+            make docker-crossconnect-monitor-build
+            make docker-crossconnect-monitor-push
   build-icmp-responder-nse:
     working_directory: /go/src/github.com/ligato/networkservicemesh/
     docker:
@@ -193,6 +246,22 @@ jobs:
             export TAG="$BUILD_TAG"
             make docker-icmp-responder-nse-build
             make docker-icmp-responder-nse-push
+
+  build-vppagent-icmp-responder-nse:
+    working_directory: /go/src/github.com/ligato/networkservicemesh/
+    docker:
+      - image: circleci/golang:1.10
+    steps:
+      - checkout
+      - setup_remote_docker
+      - run:
+          command: |
+            export COMMIT="${CIRCLE_SHA1:8:8}"
+            export BUILD_TAG="circle-${CIRCLE_BUILD_NUM}"
+            export TAG="$BUILD_TAG"
+            make docker-vppagent-icmp-responder-nse-build
+            make docker-vppagent-icmp-responder-nse-push
+
   build-nsc:
     working_directory: /go/src/github.com/ligato/networkservicemesh/
     docker:
@@ -207,20 +276,6 @@ jobs:
             export TAG="$BUILD_TAG"
             make docker-nsc-build
             make docker-nsc-push
-  build-vppagent:
-    working_directory: /go/src/github.com/ligato/networkservicemesh/
-    docker:
-      - image: circleci/golang:1.10
-    steps:
-      - checkout
-      - setup_remote_docker
-      - run:
-          command: |
-            export COMMIT="${CIRCLE_SHA1:8:8}"
-            export BUILD_TAG="circle-${CIRCLE_BUILD_NUM}"
-            export TAG="$BUILD_TAG"
-            make docker-vppagent-build
-            make docker-vppagent-push
   build-vppagent-dataplane:
     working_directory: /go/src/github.com/ligato/networkservicemesh/
     docker:
@@ -246,16 +301,19 @@ workflows:
       - build-nsmd-k8s:
           requires:
             - sanity-check
+      - build-crossconnect-monitor:
+          requires:
+            - sanity-check
       - build-nsmdp:
           requires:
             - sanity-check
       - build-icmp-responder-nse:
           requires:
             - sanity-check
-      - build-nsc:
+      - build-vppagent-icmp-responder-nse:
           requires:
             - sanity-check
-      - build-vppagent:
+      - build-nsc:
           requires:
             - sanity-check
       - build-vppagent-dataplane:
@@ -269,7 +327,9 @@ workflows:
             - build-nsmd
             - build-nsmd-k8s
             - build-nsmdp
+            - build-crossconnect-monitor
             - build-icmp-responder-nse
+            - build-vppagent-icmp-responder-nse
             - build-nsc
             - packet-deploy
       - packet-destroy:

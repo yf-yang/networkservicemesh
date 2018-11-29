@@ -1,6 +1,7 @@
 package main
 
 import (
+<<<<<<< HEAD
 	"fmt"
 	"github.com/ligato/networkservicemesh/controlplane/pkg/apis/crossconnect"
 	lcon "github.com/ligato/networkservicemesh/controlplane/pkg/apis/local/connection"
@@ -13,6 +14,18 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+=======
+	"net"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/ligato/networkservicemesh/controlplane/pkg/apis/crossconnect"
+
+	"github.com/ligato/networkservicemesh/controlplane/pkg/monitor_crossconnect_server"
+	"github.com/sirupsen/logrus"
+	"google.golang.org/grpc"
+>>>>>>> master
 )
 
 func main() {

@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"os/signal"
@@ -28,6 +29,9 @@ import (
 )
 
 const (
+	NsmBaseDirKey     = "NSM_BASEDIR"
+	DefaultNsmBaseDir = "/var/lib/networkservicemesh/"
+	// TODO Convert all the defaults to properly use NsmBaseDir
 	DataplaneRegistrarSocketKey     = "DATAPLANE_REGISTRAR_SOCKET"
 	DefaultDataplaneRegistrarSocket = "/var/lib/networkservicemesh/nsm.dataplane-registrar.io.sock"
 	DataplaneSocketKey              = "DATAPLANE_SOCKET"
@@ -36,6 +40,7 @@ const (
 	DefaultDataplaneName            = "vppagent"
 	DataplaneVPPAgentEndpointKey    = "VPPAGENT_ENDPOINT"
 	DefaultVPPAgentEndpoint         = "localhost:9111"
+	SrcIpEnvKey                     = "NSM_DATAPLANE_SRC_IP"
 )
 
 func main() {
@@ -49,6 +54,14 @@ func main() {
 		syscall.SIGQUIT)
 
 	logrus.Info("Starting vppagent-dataplane")
+
+	nsmBaseDir, ok := os.LookupEnv(NsmBaseDirKey)
+	if !ok {
+		logrus.Infof("%s not set, using default %s", NsmBaseDirKey, DefaultNsmBaseDir)
+		nsmBaseDir = DefaultNsmBaseDir
+	}
+	logrus.Infof("nsmBaseDir: %s", nsmBaseDir)
+
 	dataplaneRegistrarSocket, ok := os.LookupEnv(DataplaneRegistrarSocketKey)
 	if !ok {
 		logrus.Infof("%s not set, using default %s", DataplaneRegistrarSocketKey, DefaultDataplaneRegistrarSocket)
@@ -76,9 +89,23 @@ func main() {
 		dataplaneName = DefaultDataplaneName
 	}
 
+	srcIpStr, ok := os.LookupEnv(SrcIpEnvKey)
+	if !ok {
+		logrus.Fatalf("Env variable %s must be set to valid srcIp for use for tunnels from this Pod.  Consider using downward API to do so.", SrcIpEnvKey)
+	}
+	srcIp := net.ParseIP(srcIpStr)
+	if srcIp == nil {
+		logrus.Fatalf("Env variable %s must be set to a valid IP address, was set to %s", SrcIpEnvKey, srcIpStr)
+	}
+	ifaceName, srcIpNet, err := MgmtIface(srcIp)
+	if err != nil {
+		logrus.Fatalf("Unable to extract interface name for SrcIP: %s", srcIp)
+	}
+	logrus.Infof("SrcIP: %s, IfaceName: %s, SrcIPNet: %s", srcIp, ifaceName, srcIpNet)
+
 	logrus.Infof("dataplaneName: %s", dataplaneName)
 
-	err := tools.SocketCleanup(dataplaneSocket)
+	err = tools.SocketCleanup(dataplaneSocket)
 	if err != nil {
 		logrus.Fatalf("Error cleaning up socket %s: %s", dataplaneSocket, err)
 	}
@@ -87,7 +114,7 @@ func main() {
 		logrus.Fatalf("Error listening on socket %s: %s ", dataplaneSocket, err)
 	}
 	logrus.Info("Creating vppagent server")
-	server := vppagent.NewServer(vppAgentEndpoint)
+	server := vppagent.NewServer(vppAgentEndpoint, nsmBaseDir, srcIp, *srcIpNet, ifaceName)
 	go server.Serve(ln)
 	logrus.Info("vppagent server serving")
 
@@ -101,4 +128,28 @@ func main() {
 		logrus.Info("Closing Dataplane Registration")
 		registration.Close()
 	}
+}
+
+func MgmtIface(srcIp net.IP) (string, *net.IPNet, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return "", nil, err
+	}
+	for _, iface := range ifaces {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			return "", nil, err
+		}
+		for _, addr := range addrs {
+			switch v := addr.(type) {
+			case *net.IPNet:
+				if v.IP.Equal(srcIp) {
+					return iface.Name, v, nil
+				}
+			default:
+				return "", nil, fmt.Errorf("Type of addr not net.IPNET")
+			}
+		}
+	}
+	return "", nil, nil
 }

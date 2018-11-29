@@ -19,7 +19,7 @@
 
 function run_tests() {
     COMMIT=${COMMIT:-latest}
-    kubectl get nodes
+    kubectl get nodes -o wide
     kubectl version
     kubectl api-versions
     kubectl label --overwrite --all=true nodes app=nsmd-ds
@@ -34,15 +34,9 @@ function run_tests() {
     kubectl apply -f k8s/conf/cluster-role-admin.yaml
     kubectl apply -f k8s/conf/cluster-role-binding.yaml
 
-    cp k8s/conf/vppagent-dataplane.yaml /tmp/vppagent-dataplane.yaml
-    yq w -i /tmp/vppagent-dataplane.yaml spec.template.spec.containers[0].image networkservicemesh/vppagent-dataplane:"${COMMIT}"
-    kubectl apply -f /tmp/vppagent-dataplane.yaml
-
-    cp k8s/conf/nsmd.yaml /tmp/nsmd.yaml
-    yq w -i /tmp/nsmd.yaml spec.template.spec.containers[0].image networkservicemesh/nsmdp:"${COMMIT}"
-    yq w -i /tmp/nsmd.yaml spec.template.spec.containers[1].image networkservicemesh/nsmd:"${COMMIT}"
-    yq w -i /tmp/nsmd.yaml spec.template.spec.containers[2].image networkservicemesh/nsmd-k8s:"${COMMIT}"
-    kubectl apply -f /tmp/nsmd.yaml
+    make k8s-vppagent-dataplane-deploy
+    make k8s-nsmd-deploy
+    make k8s-crossconnect-monitor-deploy
 
     # Wait til settles
     echo "INFO: Waiting for Network Service Mesh daemonset to be up and CRDs to be available ..."
@@ -59,9 +53,10 @@ function run_tests() {
 
     wait_for_pods default
 
-    cp k8s/conf/icmp-responder-nse.yaml /tmp/icmp-responder-nse.yaml
-    yq w -i /tmp/icmp-responder-nse.yaml spec.template.spec.containers[0].image networkservicemesh/icmp-responder-nse:"${COMMIT}"
-    kubectl apply -f /tmp/icmp-responder-nse.yaml
+    make k8s-icmp-responder-nse-deploy
+    make k8s-vppagent-icmp-responder-nse-deploy
+
+    wait_for_pods default
 
     typeset -i cnt=240
     until kubectl get nse | grep icmp; do
@@ -69,22 +64,9 @@ function run_tests() {
         sleep 2
     done
 
-    cp k8s/conf/nsc.yaml /tmp/nsc.yaml
-    yq w -i /tmp/nsc.yaml spec.template.spec.containers[0].image networkservicemesh/nsc:"${COMMIT}"
-    kubectl apply -f /tmp/nsc.yaml
+    make k8s-nsc-deploy
 
-    typeset -i cnt=240
-    until kubectl get pods | grep nsc | grep Running ; do
-        ((cnt=cnt-1)) || return 1
-        sleep 2
-    done
-
-    if kubectl exec -it "$(kubectl get pods -o=name | grep nsc | sed 's@.*/@@')" -- ping -c 1 10.20.1.2 ; then
-        echo "ping successful"
-    else
-        echo "ping unsuccessful"
-        return 1
-    fi
+    wait_for_pods default
 
     # We're all good now
     return 0

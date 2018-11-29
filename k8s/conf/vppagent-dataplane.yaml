@@ -14,21 +14,15 @@ spec:
             privileged: true
           image: networkservicemesh/vppagent-dataplane:latest
           imagePullPolicy: IfNotPresent
+          env:
+            - name: NSM_DATAPLANE_SRC_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
           volumeMounts:
             - name: workspace
               mountPath: /var/lib/networkservicemesh/
               mountPropagation: Bidirectional
-        - name: vppagent
-          securityContext:
-            privileged: true
-          image: networkservicemesh/vppagent:latest
-          imagePullPolicy: IfNotPresent
-          env:
-            - name: INITIAL_LOGLVL
-              value: debug
-          volumeMounts:
-            - name: workspace
-              mountPath: /var/lib/networkservicemesh
       volumes:
         - hostPath:
             path: /var/lib/networkservicemesh

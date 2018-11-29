@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/ligato/networkservicemesh/controlplane/pkg/apis/registry"
+	"github.com/ligato/networkservicemesh/controlplane/pkg/selector"
 
 	local "github.com/ligato/networkservicemesh/controlplane/pkg/apis/local/connection"
 	remote "github.com/ligato/networkservicemesh/controlplane/pkg/apis/remote/connection"
@@ -40,14 +41,17 @@ type Model interface {
 	DeleteDataplane(name string)
 	SelectDataplane() (*Dataplane, error)
 
-	GetNsmUrl() string
 	ConnectionId() string
+	Vni() string
 
+	// After listener will be added it will be called for all existing dataplanes/endpoints
 	AddListener(listener ModelListener)
 	RemoveListener(listener ModelListener)
 
 	SetNsm(nsm *registry.NetworkServiceManager)
 	GetNsm() *registry.NetworkServiceManager
+
+	GetSelector() selector.Selector
 }
 
 type impl struct {
@@ -56,16 +60,33 @@ type impl struct {
 	networkServices   map[string][]*registry.NSERegistration
 	dataplanes        map[string]*Dataplane
 	lastConnnectionId uint64
-	nsmUrl            string
+	lastVNI           uint64
 	nsm               *registry.NetworkServiceManager
 	listeners         []ModelListener
+	selector          selector.Selector
 }
 
 func (i *impl) AddListener(listener ModelListener) {
+	i.Lock()
 	i.listeners = append(i.listeners, listener)
+	i.Unlock()
+
+	i.RLock()
+	defer i.RUnlock()
+
+	// We need to notify this listener about all already added dataplanes/endpoints
+	for _, dp := range i.dataplanes {
+		listener.DataplaneAdded(dp)
+	}
+
+	for _, ep := range i.endpoints {
+		listener.EndpointAdded(ep.NetworkserviceEndpoint)
+	}
 }
 
 func (i *impl) RemoveListener(listener ModelListener) {
+	i.Lock()
+	defer i.Unlock()
 	for idx, v := range i.listeners {
 		if v == listener {
 			i.listeners = append(i.listeners[:idx], i.listeners[idx+1:]...)
@@ -185,10 +206,6 @@ func (i *impl) DeleteDataplane(name string) {
 	}
 }
 
-func (i *impl) GetNsmUrl() string {
-	return i.nsmUrl
-}
-
 func (i *impl) GetNsm() *registry.NetworkServiceManager {
 	return i.nsm
 }
@@ -197,13 +214,14 @@ func (i *impl) SetNsm(nsm *registry.NetworkServiceManager) {
 	i.nsm = nsm
 }
 
-func NewModel(nsmUrl string) Model {
+func NewModel() Model {
 	return &impl{
-		nsmUrl:          nsmUrl,
 		dataplanes:      make(map[string]*Dataplane),
 		networkServices: make(map[string][]*registry.NSERegistration),
 		endpoints:       make(map[string]*registry.NSERegistration),
 		listeners:       []ModelListener{},
+		selector:        selector.NewMatchSelector(),
+		lastVNI:         1,
 	}
 }
 
@@ -212,4 +230,15 @@ func (i *impl) ConnectionId() string {
 	defer i.Unlock()
 	i.lastConnnectionId++
 	return strconv.FormatUint(i.lastConnnectionId, 16)
+}
+
+func (i *impl) Vni() string {
+	i.Lock()
+	defer i.Unlock()
+	i.lastVNI++
+	return strconv.FormatUint(i.lastVNI, 10)
+}
+
+func (i *impl) GetSelector() selector.Selector {
+	return i.selector
 }
